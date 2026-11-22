@@ -25,6 +25,7 @@ The rule that shapes everything here: **it costs nothing to run.** No paid serve
   PeerJS public broker (0.peerjs.com, free) ◀─┘
 ```
 
+- **Toolchain: Bun + TypeScript, no Node.** Bun 1.4.5 (pinned in `package.json` `packageManager` and in CI) is the package manager, script runner, typechecker (`bun check`) and unit-test runner (`bun test`). Vite 8 is the bundler and dev server, always run on the Bun runtime with `bun --bun vite` so it never falls back to Node. CI uses `oven-sh/setup-bun@v2` and has no `setup-node` step. Use `bun x`, not `bunx` (the Windows winget install of Bun has no `bunx.exe`).
 - **Static site.** Vite + TypeScript build to plain files. A GitHub Actions workflow (`actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages`; permissions `pages: write`, `id-token: write`) deploys `dist/` to GitHub Pages on every push to `main`. The repo is public and Pages is already set to deploy from Actions. The site lives under `/buzzworthy/`, so Vite's `base` is `/buzzworthy/` and every asset, link and QR URL is built from `import.meta.env.BASE_URL`.
 - **Routing.** Hash routes (`#/host`, `#/play`, `#/play?room=ABCD`, `#/edit`) so GitHub Pages never needs server-side rewrites. The query sits *inside* the hash, so the router parses params from `location.hash`, never `location.search`. In-game route changes use `history.replaceState` so a back swipe can't leave the game.
 - **The host is the server.** The host tab holds all game state and makes every decision: who buzzed first, too-early lockouts, scores, which clue is open. Phones only send intents ("buzz", "wager 400") and render what the host tells them.
@@ -114,10 +115,11 @@ Host → phone: `welcome {playerId, seat, score}`, `state {seq, phase, clueId?, 
 
 ## Testing
 
-- **Check command:** `npm ci && npm run check` runs the typecheck, unit tests (Vitest) and build. It never touches the public broker, so it can't fail because of someone else's server.
-- **Unit tests** cover the router and hash params, room codes, the storage wrapper, protocol parsing, board validation, clue arbitration and scoring, wagers, heartbeat timing (Vitest fake timers against an in-memory transport), and wake-lock requests (stubbed `navigator.wakeLock`).
-- **End-to-end tests** (Playwright, `npm run e2e`) start a **local PeerServer** (the `peer` npm package) on localhost and the Vite dev server pointed at it. One host page and several phone pages run in separate browser contexts, so each has its own storage and `playerId`. This exercises the real PeerJS transport with no internet. CI runs `check` and `e2e` on every push.
-- **Smoke test** (`npm run smoke`, manual only, not in CI): one host and one phone against the real public broker, including a host reload that reclaims the room with its token.
+- **Check command:** `bun install --frozen-lockfile && bun run check`, where `check` is `bun check && bun test && bun run build` (typecheck, unit tests, build). It never touches the public broker, so it can't fail because of someone else's server.
+- **Unit tests** run with `bun test`. DOM tests use happy-dom through a preload (`happydom.ts` calling `GlobalRegistrator.register()`, listed under `[test] preload` in `bunfig.toml`; Bun 1.4.5 ignores `[test] environment`). Fake timers use `jest.useFakeTimers()` / `jest.advanceTimersByTime()` from `bun:test` (there's no async variant in 1.4.5, so flush promises by hand). Globals like `navigator.wakeLock` are stubbed with `Object.defineProperty` and removed in `afterEach`. PeerJS is replaced with `mock.module()` or the in-memory transport, since happy-dom has no WebRTC. Use the docs shipped in `node_modules/bun-types/docs`: the live bun.sh docs describe features newer than 1.4.5.
+- Tests cover the router and hash params, room codes, the storage wrapper, protocol parsing, board validation, clue arbitration and scoring, wagers, heartbeat timing (fake timers against an in-memory transport), and wake-lock requests (stubbed `navigator.wakeLock`).
+- **End-to-end tests** (Playwright 1.65.1 or later, `bun run e2e` = `bun x --bun playwright test`; always pass `--bun`, or the CLI's shebang picks up any Node on the PATH, such as the one preinstalled on GitHub's runners) start a **local PeerServer** (the `peer` package, run with `bun`) on localhost and the Vite dev server pointed at it. Give every test unique peer IDs so parallel workers don't collide. One host page and several phone pages run in separate browser contexts, so each has its own storage and `playerId`. This exercises the real PeerJS transport with no internet. CI runs `check` and `e2e` on every push.
+- **Smoke test** (`bun run smoke`, manual only, not in CI): one host and one phone against the real public broker, including a host reload that reclaims the room with its token.
 - The in-memory `Transport` fake is for unit tests only, where host and phone run in one process.
 
 ## Out of scope for v1
@@ -126,4 +128,4 @@ Our own TURN relay, accounts, cloud-saved boards, spectators, more than 12 playe
 
 ## Prerequisite on the dev computer
 
-Node.js 22 LTS or newer must be installed on any computer that builds or runs checks (for example `winget install OpenJS.NodeJS.LTS`).
+Bun 1.4.5 must be installed on any computer that builds or runs checks (for example `winget install Oven-sh.Bun`). Node.js is not needed and isn't used. Chromium for e2e tests installs with `bun x playwright install chromium`.
